@@ -17,7 +17,7 @@ and builds an **MCUboot OTA-updatable image** via sysbuild.
 | GATT               | Environmental Sensing Service: Temperature / Humidity / Pressure |
 | Connectivity power | ~1 s advertising; 100–150 ms connection interval, latency 4    |
 | Liveness           | Hardware watchdog + check-in supervisor thread                 |
-| DFU                | MCUboot image built with sysbuild                              |
+| DFU                | MCUboot (sysbuild) + MCUmgr SMP-over-BLE transport             |
 
 > Pressure (0x2A6D) is wired through the service and the sampling loop already;
 > populating it is a drop-in second part (e.g. LPS22HB on the same I²C bus).
@@ -82,14 +82,27 @@ west flash
 
 ## OTA / DFU
 
+The `--sysbuild` image bundles MCUboot **and** the MCUmgr **SMP transport over
+BLE**, so a new image can be uploaded wirelessly and swapped in by the
+bootloader.
+
 ```sh
-# build MCUboot + a signed application image
+# build MCUboot + a signed, DFU-capable application image
 west build -p always -b nrf52840dk/nrf52840 --sysbuild ble
+west flash                                  # initial flash: MCUboot + slot0
+
+# later: push an update over BLE with mcumgr
+PEER="peer_name='ble-env-sensor'"
+mcumgr --conntype ble --connstring "$PEER" image upload build/ble/zephyr/zephyr.signed.bin
+mcumgr --conntype ble --connstring "$PEER" image list
+mcumgr --conntype ble --connstring "$PEER" reset
 ```
 
-This produces `zephyr.signed.bin` (uploadable to the secondary slot) and a
-merged `MCUboot + app` image for the initial flash. Update transport (BLE SMP /
-`mcumgr`) and a demo recording land next.
+MCUboot runs the uploaded image in test mode; once the application reaches a
+healthy boot it calls `boot_write_img_confirmed()`, otherwise MCUboot reverts on
+the next reset. The SMP/DFU configuration lives in
+[`sysbuild/ble.conf`](sysbuild/ble.conf) and is applied only to the OTA build.
+A demo recording lands once it's exercised on hardware.
 
 ## Testing
 
@@ -117,8 +130,9 @@ push using the official Zephyr toolchain:
 - [x] Environmental Sensing GATT service + notifications
 - [x] Watchdog supervisor
 - [x] MCUboot / sysbuild OTA image
+- [x] BLE SMP (MCUmgr) DFU transport + image-confirm
 - [ ] Persist bonds/CCC (settings + NVS)
-- [ ] BLE SMP DFU transport + OTA demo recording
+- [ ] OTA demo recording (needs hardware)
 - [ ] Add LPS22HB for pressure channel
 - [ ] Bench power measurements → fill the power table
 
