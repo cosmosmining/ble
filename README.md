@@ -1,0 +1,135 @@
+# BLE Environmental Sensing Node
+
+A power-tuned BLE peripheral on the **Nordic nRF52840** running **Zephyr RTOS**.
+It samples an environmental sensor on a **data-ready (DRDY) interrupt**, exposes
+readings through the standard **Environmental Sensing GATT Service (ESS, 0x181A)**,
+and builds an **MCUboot OTA-updatable image** via sysbuild.
+
+## Architecture
+
+| Decision           | Choice                                                          |
+| ------------------ | -------------------------------------------------------------- |
+| SoC / board        | nRF52840 (nRF52840 DK); CI also builds nRF52833 DK             |
+| RTOS               | Zephyr v4.1.0 (pinned in `west.yml`)                           |
+| Sensor             | ST **HTS221** (temperature + humidity) over I²C                |
+| Sampling pattern   | Sensor **DRDY interrupt** → trigger → dedicated sampling thread |
+| Driver             | Zephyr `sensor_*` API, selected via the `env-sensor` DT alias  |
+| GATT               | Environmental Sensing Service: Temperature / Humidity / Pressure |
+| Connectivity power | ~1 s advertising; 100–150 ms connection interval, latency 4    |
+| Liveness           | Hardware watchdog + check-in supervisor thread                 |
+| DFU                | MCUboot image built with sysbuild                              |
+
+> Pressure (0x2A6D) is wired through the service and the sampling loop already;
+> populating it is a drop-in second part (e.g. LPS22HB on the same I²C bus).
+
+### Data path
+
+```
+   ┌────────┐ DRDY IRQ ┌───────────────┐  k_sem   ┌─────────────────┐ sensor_*  ┌─────────┐ notify
+   │ HTS221 │ ───────► │ sensor trigger │ ───────► │ sampling thread │ ───────►  │ ESS     │ ─────► central
+   │ (I²C)  │          │ thread (driver)│  give    │  (prio 7)       │  fetch    │ (GATT)  │
+   └────────┘          └───────────────┘          └─────────────────┘           └─────────┘
+```
+
+The DRDY GPIO ISR (inside the driver) wakes the sensor subsystem's trigger
+thread, which calls our handler. The handler does the minimum — `k_sem_give` —
+and the dedicated sampling thread performs the blocking I²C read and the GATT
+notification. Nothing touches the I²C bus or GATT from interrupt context.
+
+## Modules
+
+| File              | Responsibility                                              |
+| ----------------- | ----------------------------------------------------------- |
+| `src/main.c`      | Start order: watchdog → Bluetooth → sampling                |
+| `src/bluetooth.c` | Controller/host enable, advertising, power-tuned conn params |
+| `src/ess.c`       | ESS GATT service, CCC subscriptions, notifications          |
+| `src/ess_format.c`| Pure sensor-value → ESS fixed-point conversions (unit tested) |
+| `src/sampling.c`  | DRDY trigger install + sampling thread + watchdog check-in  |
+| `src/watchdog.c`  | HW watchdog + multi-task check-in supervisor                |
+
+## Hardware
+
+- **nRF52840 DK**
+- **HTS221** breakout on the Arduino I²C header (`arduino_i2c`, addr `0x5F`),
+  DRDY wired to `P0.03`. See [`app.overlay`](app.overlay).
+
+## Power profile
+
+Supply current per power state (to be filled from bench measurements):
+
+| State                         | Current | Notes                              |
+| ----------------------------- | ------: | ---------------------------------- |
+| System OFF (RAM retention)    |   _TBD_ | deepest sleep, wake on GPIO        |
+| Advertising (~1 s interval)   |   _TBD_ | not connected                      |
+| Connected (idle)              |   _TBD_ | 100–150 ms interval, latency 4     |
+| Connected (sampling + notify) |   _TBD_ | per-sample peak                    |
+
+## Build & flash
+
+This is a Zephyr **T2 (application = manifest repo)** workspace.
+
+```sh
+# one-time workspace setup
+west init -m https://github.com/cosmosmining/ble --mr claude/kind-carson-BoClC my-ws
+cd my-ws
+west update
+west zephyr-export
+
+# build + flash the application
+west build -p always -b nrf52840dk/nrf52840 ble
+west flash
+```
+
+## OTA / DFU
+
+```sh
+# build MCUboot + a signed application image
+west build -p always -b nrf52840dk/nrf52840 --sysbuild ble
+```
+
+This produces `zephyr.signed.bin` (uploadable to the secondary slot) and a
+merged `MCUboot + app` image for the initial flash. Update transport (BLE SMP /
+`mcumgr`) and a demo recording land next.
+
+## Testing
+
+```sh
+west twister -T tests -p native_sim
+```
+
+`tests/ess_format` unit-tests the ESS conversion math on the host (no hardware).
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs three jobs on every
+push using the official Zephyr toolchain:
+
+- **build** — firmware across a board matrix (nRF52840 DK, nRF52833 DK)
+- **build-ota** — MCUboot/sysbuild signed image for the nRF52840 DK
+- **twister** — host unit tests on `native_sim`
+
+## Roadmap
+
+- [x] Buildable scaffold + board-matrix CI
+- [x] HTS221 devicetree overlay (DRDY-capable, `env-sensor` alias)
+- [x] BLE peripheral: advertising + power-tuned connection parameters
+- [x] DRDY-triggered sampling thread (ISR → thread hand-off)
+- [x] Environmental Sensing GATT service + notifications
+- [x] Watchdog supervisor
+- [x] MCUboot / sysbuild OTA image
+- [ ] Persist bonds/CCC (settings + NVS)
+- [ ] BLE SMP DFU transport + OTA demo recording
+- [ ] Add LPS22HB for pressure channel
+- [ ] Bench power measurements → fill the power table
+
+## Design notes
+
+- **ISR vs thread context** — the DRDY callback only does `k_sem_give`; the I²C
+  read and GATT notify run in the sampling thread. `k_sem_give` is ISR-safe;
+  the I²C transfer (which blocks on a mutex) is not.
+- **DMA usage** — for HTS221's few-byte reads at ≤1 Hz, PIO I²C is cheaper than
+  DMA setup; on nRF, EasyDMA also requires buffers in RAM (not flash/UICR).
+- **Priority inversion** — the I²C bus mutex uses priority inheritance so the
+  BLE controller is not blocked behind a low-priority bus user.
+- **Watchdog design** — the supervisor only pets the HW WDT once *every*
+  registered task has checked in, so a single hung task forces a reset.

@@ -1,0 +1,7 @@
+tests:
+  app.ess_format:
+    platform_allow:
+      - native_sim
+    tags:
+      - ess
+      - unit

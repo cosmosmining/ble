@@ -1,0 +1,21 @@
+# West manifest — T2 ("application is the manifest repo") topology.
+#
+# In CI the repo is checked out at <workspace>/ble and we run:
+#   west init -l ble && west update
+# which clones Zephyr (pinned below) and its modules as siblings.
+manifest:
+  self:
+    path: ble
+
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.1.0
+      # Pull Zephyr's modules. Robust first; can be trimmed to a
+      # name-allowlist (cmsis, hal_nordic, mcuboot, mbedtls, segger)
+      # once the build is green and dependencies are pinned down.
+      import: true

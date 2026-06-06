@@ -1,0 +1,26 @@
+/*
+ * Environmental sensor on the nRF52840/nRF52833 DK Arduino I2C header.
+ *
+ * HTS221 (temperature + humidity) with its data-ready line wired to a GPIO,
+ * exposed to the application through the `env-sensor` alias so the firmware
+ * stays decoupled from the specific part. `arduino_i2c` is used because the
+ * board files already provide its pin control.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	aliases {
+		env-sensor = &hts221;
+	};
+};
+
+&arduino_i2c {
+	status = "okay";
+
+	hts221: hts221@5f {
+		compatible = "st,hts221";
+		reg = <0x5f>;
+		drdy-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+	};
+};
