@@ -84,6 +84,25 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.le_param_updated = le_param_updated,
 };
 
+#if defined(CONFIG_BT_SMP)
+static void pairing_complete(struct bt_conn *conn, bool bonded)
+{
+	ARG_UNUSED(conn);
+	LOG_INF("pairing complete (bonded=%d)", bonded);
+}
+
+static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
+{
+	ARG_UNUSED(conn);
+	LOG_WRN("pairing failed (reason %d)", reason);
+}
+
+static struct bt_conn_auth_info_cb auth_info_cb = {
+	.pairing_complete = pairing_complete,
+	.pairing_failed = pairing_failed,
+};
+#endif /* CONFIG_BT_SMP */
+
 int app_bt_init(void)
 {
 	int err = bt_enable(NULL);
@@ -95,6 +114,10 @@ int app_bt_init(void)
 
 #if IS_ENABLED(CONFIG_SETTINGS)
 	settings_load();
+#endif
+
+#if defined(CONFIG_BT_SMP)
+	(void)bt_conn_auth_info_cb_register(&auth_info_cb);
 #endif
 
 	start_adv();
