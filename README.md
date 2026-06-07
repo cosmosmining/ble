@@ -18,7 +18,8 @@ and builds an **MCUboot OTA-updatable image** via sysbuild.
 | Connectivity power | ~1 s advertising; 100–150 ms connection interval, latency 4    |
 | Liveness           | Hardware watchdog + check-in supervisor thread                 |
 | Persistence        | Bonds + CCC subscriptions stored in NVS via the settings subsystem |
-| DFU                | MCUboot (sysbuild) + MCUmgr SMP-over-BLE transport             |
+| Secure boot        | MCUboot RoT: ECDSA-P256 signature verified **every boot** + anti-rollback |
+| DFU                | MCUmgr SMP-over-BLE; swap mode with test/confirm/revert        |
 
 > Pressure (0x2A6D) is wired through the service and the sampling loop already;
 > populating it is a drop-in second part (e.g. LPS22HB on the same I²C bus).
@@ -99,13 +100,47 @@ mcumgr --conntype ble --connstring "$PEER" image list
 mcumgr --conntype ble --connstring "$PEER" reset
 ```
 
-MCUboot runs the uploaded image in test mode; once the application reaches a
-healthy boot it calls `boot_write_img_confirmed()`, otherwise MCUboot reverts on
-the next reset. The SMP/DFU configuration lives in
-[`sysbuild/ble.conf`](sysbuild/ble.conf) and is applied only to the OTA build.
-A demo recording lands once it's exercised on hardware.
+Every image is **signed with our own ECDSA P-256 Root-of-Trust key** and
+verified by MCUboot before it runs (and on every subsequent boot), so the
+upload above only succeeds for an image we signed. MCUboot runs the uploaded
+image in test mode; once the application reaches a healthy boot it calls
+`boot_write_img_confirmed()`, otherwise MCUboot reverts on the next reset. The
+SMP/DFU configuration lives in [`sysbuild/ble.conf`](sysbuild/ble.conf) and is
+applied only to the OTA build. A demo recording lands once it's exercised on
+hardware.
 
-## Security & persistence
+See **[Secure boot](#secure-boot)** below for the trust model and how the signed
+image is produced and verified.
+
+## Secure boot
+
+The OTA image boots through a verified chain rooted in a key we control:
+
+- **Root of Trust** — MCUboot embeds the *public* half of our **ECDSA P-256**
+  key; nothing it can't trace to that key runs.
+- **Verify every boot** (`CONFIG_BOOT_VALIDATE_SLOT0`) — the slot0 signature is
+  re-checked on every reset, not just after an update, so in-place tampering is
+  caught. This is the line between secure boot and "OTA with a checksum".
+- **Anti-rollback** — the signed image carries a monotonic security counter;
+  MCUboot rejects any image whose counter is lower than the running one
+  (`MCUBOOT_DOWNGRADE_PREVENTION_SECURITY_COUNTER`).
+- **Fail-safe** — swap mode keeps the previous image, so an update that never
+  confirms reverts on the next reset.
+
+Configuration lives in [`sysbuild.conf`](sysbuild.conf) (algorithm + key) and
+[`sysbuild/mcuboot.conf`](sysbuild/mcuboot.conf) (verify + anti-rollback); the
+key is in [`keys/`](keys/). The full trust model, key lifecycle, verification
+steps, and deferred hardening (APPROTECT lock, hardware rollback counter,
+measured boot / SPDM attestation) are in
+**[`docs/secure-boot.md`](docs/secure-boot.md)**.
+
+> [!WARNING]
+> `keys/dev-signing-ec-p256.pem` is a **development** key committed so the repo
+> builds a verifiable signed image out of the box — it provides no real security.
+> Production must use a key held off-device (HSM/KMS); see
+> [`keys/README.md`](keys/README.md).
+
+## Pairing & persistence
 
 Pairing uses Just Works (LE Security Mode 1). Bonds and per-client CCC
 (notification) subscriptions are written to the `storage` flash partition through
@@ -140,6 +175,10 @@ push using the official Zephyr toolchain:
 - [x] MCUboot / sysbuild OTA image
 - [x] BLE SMP (MCUmgr) DFU transport + image-confirm
 - [x] Persist bonds/CCC (settings + NVS)
+- [x] Secure boot: ECDSA-P256 signing + verify-every-boot with our own RoT key
+- [x] Anti-rollback via MCUboot security counter
+- [ ] Measured boot + attestation hooks (retained-RAM backend; needs hardware)
+- [ ] Lock nRF52840 APPROTECT + HW monotonic rollback counter (needs hardware)
 - [ ] OTA demo recording (needs hardware)
 - [ ] Add LPS22HB for pressure channel
 - [ ] Bench power measurements → fill the power table

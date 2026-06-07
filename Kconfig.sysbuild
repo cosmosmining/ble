@@ -1,0 +1,25 @@
+# Sysbuild Kconfig root for this application.
+#
+# Its only job is to point the MCUboot signing key at this repo's committed
+# development key by an ABSOLUTE path, then defer to the stock sysbuild Kconfig
+# for everything else.
+#
+# Why this can't live in sysbuild.conf: the key has to be an absolute path
+# (the bootloader image and the application image resolve a relative key path
+# against different base directories, so no single relative path works for
+# both). The only portable way to write an absolute path here is the module-dir
+# macro $(ZEPHYR_BLE_ENV_SENSOR_MODULE_DIR) — and Kconfig only expands $(...)
+# inside Kconfig *source* files, not in values assigned from a .conf fragment.
+# So we override the default here (this is exactly how MCUboot's own default key
+# uses $(ZEPHYR_MCUBOOT_MODULE_DIR)). zephyr/module.yml is what exposes the
+# macro. See docs/secure-boot.md.
+#
+# This default must precede the stock definition: Kconfig uses the first default
+# whose condition holds. An explicit SB_CONFIG_BOOT_SIGNATURE_KEY_FILE in
+# sysbuild.conf would still override it (don't set one — let this default win),
+# while a `-D` override on the build command line continues to work for
+# production keys (see keys/README.md).
+config BOOT_SIGNATURE_KEY_FILE
+	default "$(ZEPHYR_BLE_ENV_SENSOR_MODULE_DIR)/keys/dev-signing-ec-p256.pem" if BOOT_SIGNATURE_TYPE_ECDSA_P256
+
+source "share/sysbuild/Kconfig"
