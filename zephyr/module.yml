@@ -1,0 +1,14 @@
+# Register this repository as a Zephyr module.
+#
+# The only reason we need this is to expose the repo's absolute path to Kconfig
+# as $(ZEPHYR_BLE_ENV_SENSOR_MODULE_DIR). The MCUboot signing key has to be given
+# as an *absolute* path because the bootloader image and the application image
+# resolve a relative key path against different base directories (MCUboot ->
+# its own source/conf dir; the app -> the west workspace topdir). A module dir
+# is the same absolute path for both, exactly like MCUboot's own default key
+# ($(ZEPHYR_MCUBOOT_MODULE_DIR)/root-ec-p256.pem).
+#
+# There is deliberately no `build:` section and no zephyr/CMakeLists.txt or
+# zephyr/Kconfig: this module contributes no sources, it only exposes its
+# directory. The application is still built from the top-level CMakeLists.txt.
+name: ble_env_sensor
