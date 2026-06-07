@@ -87,7 +87,7 @@ signature check passed.
 | --- | --- | --- |
 | Build MCUboot + sign app | `SB_CONFIG_BOOTLOADER_MCUBOOT` | `sysbuild.conf` |
 | Signature algorithm (P-256) | `SB_CONFIG_BOOT_SIGNATURE_TYPE_ECDSA_P256` | `sysbuild.conf` |
-| Root-of-Trust key (absolute path) | `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` | `sysbuild.conf` |
+| Root-of-Trust key path (default) | `BOOT_SIGNATURE_KEY_FILE` default | `Kconfig.sysbuild` |
 | Swap mode (revert-capable) | `SB_CONFIG_MCUBOOT_MODE_SWAP_USING_MOVE` | `sysbuild.conf` |
 | Verify slot0 every boot | `CONFIG_BOOT_VALIDATE_SLOT0` | `sysbuild/mcuboot.conf` |
 | Anti-rollback policy | `CONFIG_MCUBOOT_DOWNGRADE_PREVENTION[_SECURITY_COUNTER]` | `sysbuild/mcuboot.conf` |
@@ -97,8 +97,11 @@ signature check passed.
 > key against its own source/conf dir while the application image resolves it
 > against the west workspace topdir, so no single relative path satisfies both.
 > [`zephyr/module.yml`](../zephyr/module.yml) registers this repo as a Zephyr
-> module purely so `$(ZEPHYR_BLE_ENV_SENSOR_MODULE_DIR)` gives an absolute path
-> both images agree on — the same trick MCUboot uses for its own default key.
+> module so `$(ZEPHYR_BLE_ENV_SENSOR_MODULE_DIR)` gives an absolute path both
+> images agree on — the same trick MCUboot uses for its own default key. That
+> macro only expands inside a Kconfig *source* (not in a `.conf` value), so the
+> key path is set as a Kconfig default in [`Kconfig.sysbuild`](../Kconfig.sysbuild)
+> rather than as `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` in `sysbuild.conf`.
 
 ## Verifying it
 
